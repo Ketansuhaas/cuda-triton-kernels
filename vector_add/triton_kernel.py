@@ -35,9 +35,10 @@ def test_vector_add():
     torch.manual_seed(0)
     sizes = [1, 127, 1024, 10_000, 1_048_576]
 
-    # warm up so first-run JIT compile doesn't pollute timing
-    _x = torch.ones(1, device="cuda")
-    vector_add(_x, _x)
+    # warm up every size so JIT compile doesn't pollute timing
+    for n in sizes:
+        _x = torch.ones(n, device="cuda")
+        vector_add(_x, _x)
     torch.cuda.synchronize()
 
     for n in sizes:
