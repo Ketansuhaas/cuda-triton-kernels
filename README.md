@@ -5,7 +5,7 @@ GPU kernels written in both CUDA (`.cu`) and Triton (`.py`), tested on Modal.
 ## Setup
 
 ```bash
-pip install modal triton torch
+pip install modal
 modal setup  # authenticate with Modal
 ```
 
