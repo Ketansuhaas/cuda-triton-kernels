@@ -15,19 +15,19 @@ Pass any kernel file to [`test.py`](test.py) — it detects `.cu` vs `.py` autom
 
 ```bash
 # Triton
-modal run test.py --kernel vector_add.py
+modal run test.py --kernel vector_add/triton.py
 
 # CUDA
-modal run test.py --kernel vector_add.cu
+modal run test.py --kernel vector_add/cuda.cu
 
 # Different GPU (default: T4)
-modal run test.py --kernel vector_add.py --gpu A10G
-modal run test.py --kernel vector_add.py --gpu A100-40GB
-modal run test.py --kernel vector_add.py --gpu H100
+modal run test.py --kernel vector_add/triton.py --gpu A10G
+modal run test.py --kernel vector_add/triton.py --gpu A100-40GB
+modal run test.py --kernel vector_add/triton.py --gpu H100
 ```
 
 ## Kernels
 
 | Kernel | Triton | CUDA |
 |--------|--------|------|
-| Vector Add | [`vector_add.py`](vector_add.py) | [`vector_add.cu`](vector_add.cu) |
+| Vector Add | [`vector_add/triton.py`](vector_add/triton.py) | [`vector_add/cuda.cu`](vector_add/cuda.cu) |
