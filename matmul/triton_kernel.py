@@ -118,14 +118,45 @@ def matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 def test_matmul():
     torch.manual_seed(0)
     # Include non-multiples of BLOCK to exercise boundary masking.
-    for M, N, K in [(32, 32, 32), (37, 41, 28), (1, 64, 128)]:
+    sizes = [(32, 32, 32), (37, 41, 28), (128, 128, 128), (512, 512, 512)]
+
+    # Warm up every size so the Triton JIT compile does not inflate timings.
+    for M, N, K in sizes:
+        _a = torch.ones(M, K, device="cuda")
+        _b = torch.ones(K, N, device="cuda")
+        matmul(_a, _b)
+    torch.cuda.synchronize()
+
+    for M, N, K in sizes:
+        print(f"\n--- M={M} N={N} K={K} ---")
+        torch.cuda.reset_peak_memory_stats()
+
+        # 1. allocate inputs on the GPU
+        mem0 = torch.cuda.memory_allocated()
         a = torch.randn(M, K, device="cuda")
         b = torch.randn(K, N, device="cuda")
+        mem1 = torch.cuda.memory_allocated()
+        print(f"  [alloc]   {mem1/1024**2:.3f} MB  (+{(mem1-mem0)/1024**2:.3f} MB)")
+
+        # 2. time the kernel with CUDA events (GPU-side, sub-millisecond precision)
+        start = torch.cuda.Event(enable_timing=True)
+        end   = torch.cuda.Event(enable_timing=True)
+        start.record()
         out = matmul(a, b)
-        expected = a @ b  # PyTorch reference (cuBLAS)
+        end.record()
+        torch.cuda.synchronize()  # wait for GPU before reading the timer
+        elapsed_ms = start.elapsed_time(end)
+        mem2 = torch.cuda.memory_allocated()
+        print(f"  [kernel]  {elapsed_ms:.3f} ms   mem={mem2/1024**2:.3f} MB  (+{(mem2-mem1)/1024**2:.3f} MB)")
+
+        # 3. correctness check against PyTorch reference (cuBLAS)
+        expected = a @ b
         torch.testing.assert_close(out, expected, rtol=1e-4, atol=1e-4)
-        print(f"M={M} N={N} K={K} OK")
-    print("All tests passed.")
+        max_err = (out - expected).abs().max().item()
+        peak = torch.cuda.max_memory_allocated()
+        print(f"  [verify]  max_err={max_err:.2e}  peak={peak/1024**2:.3f} MB  PASS")
+
+    print("\nAll tests passed.")
 
 
 if __name__ == "__main__":
