@@ -1,10 +1,10 @@
-// vector_add/cuda.cu
-// Elementwise vector addition  out[i] = x[i] + y[i]  using CUDA.
+// reverse_vector/cuda.cu
+// Reverse a vector: out[i] = x[n - 1 - i]  using CUDA.
 //
 // Parallelisation:
-//   One GPU thread per element. A 1-D grid of 1-D blocks covers the
-//   full array; the "if (i < n)" guard handles arrays whose length is
-//   not a multiple of BLOCK_SIZE.
+//   One GPU thread per element. Thread i reads x[i] and writes to
+//   out[n-1-i]. Because every thread reads from a unique source and
+//   writes to a unique destination there are no data hazards.
 //
 // Grid:  ceil(n / BLOCK_SIZE) blocks   (1-D)
 // Block: BLOCK_SIZE (256) threads      (1-D)
@@ -14,18 +14,18 @@
 #include <math.h>
 #include <cuda_runtime.h>
 
-// Each thread computes the global index i from its block/thread IDs
-// and writes one output element.
-__global__ void vector_add_kernel(const float* x, const float* y, float* out, int n) {
+// Each thread reads position i from x and writes it to the mirror position
+// (n-1-i) in out, effectively reversing the array.
+__global__ void reverse_vector_kernel(const float* x, float* out, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;  // global thread index
-    if (i < n) out[i] = x[i] + y[i];               // bounds check for partial last block
+    if (i < n) out[n - 1 - i] = x[i];              // mirror: i ↔ n-1-i
 }
 
 // Host wrapper: launches the kernel with a 1-D grid sized for n elements.
-void vector_add(const float* x, const float* y, float* out, int n) {
+void reverse_vector(const float* x, float* out, int n) {
     const int BLOCK_SIZE = 256;
     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;  // ceil(n / BLOCK_SIZE)
-    vector_add_kernel<<<grid, BLOCK_SIZE>>>(x, y, out, n);
+    reverse_vector_kernel<<<grid, BLOCK_SIZE>>>(x, out, n);
 }
 
 // Print current device memory usage (called after alloc and after kernel).
@@ -43,16 +43,14 @@ void test(int n) {
     printf("\n--- n=%d ---\n", n);
     size_t bytes = n * sizeof(float);
 
-    // 1. host alloc — fill with values whose sum is easy to verify
+    // 1. host alloc — fill with sequential values so reversal is easy to verify
     float* hx   = (float*)malloc(bytes);
-    float* hy   = (float*)malloc(bytes);
     float* hout = (float*)malloc(bytes);
-    for (int i = 0; i < n; i++) { hx[i] = (float)i; hy[i] = (float)(n - i); }
+    for (int i = 0; i < n; i++) hx[i] = (float)i;
 
     // 2. device alloc
-    float *dx, *dy, *dout;
+    float *dx, *dout;
     cudaMalloc(&dx,   bytes);
-    cudaMalloc(&dy,   bytes);
     cudaMalloc(&dout, bytes);
     print_mem("alloc");
 
@@ -63,7 +61,6 @@ void test(int n) {
 
     cudaEventRecord(t0);
     cudaMemcpy(dx, hx, bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(dy, hy, bytes, cudaMemcpyHostToDevice);
     cudaEventRecord(t1);
     cudaEventSynchronize(t1);
     float h2d_ms; cudaEventElapsedTime(&h2d_ms, t0, t1);
@@ -71,7 +68,7 @@ void test(int n) {
 
     // 4. kernel launch — record start/stop events around the dispatch
     cudaEventRecord(t2);
-    vector_add(dx, dy, dout, n);
+    reverse_vector(dx, dout, n);
     cudaEventRecord(t3);
     cudaEventSynchronize(t3);   // wait for GPU to finish before reading the timer
     float kernel_ms; cudaEventElapsedTime(&kernel_ms, t2, t3);
@@ -88,10 +85,10 @@ void test(int n) {
     float d2h_ms; cudaEventElapsedTime(&d2h_ms, t4, t5);
     printf("  [D2H]     %.3f ms\n", d2h_ms);
 
-    // 6. correctness check — compare against CPU reference element-by-element
+    // 6. correctness check — out[i] should equal x[n-1-i]
     float max_err = 0.0f;
     for (int i = 0; i < n; i++) {
-        float err = fabsf(hout[i] - (hx[i] + hy[i]));
+        float err = fabsf(hout[i] - hx[n - 1 - i]);
         if (err > max_err) max_err = err;
     }
     printf("  [verify]  max_err=%.2e  total=%.3f ms  %s\n",
@@ -99,13 +96,12 @@ void test(int n) {
 
     cudaEventDestroy(t0); cudaEventDestroy(t1); cudaEventDestroy(t2); cudaEventDestroy(t3);
     cudaEventDestroy(t4); cudaEventDestroy(t5);
-    cudaFree(dx); cudaFree(dy); cudaFree(dout);
-    free(hx); free(hy); free(hout);
+    cudaFree(dx); cudaFree(dout);
+    free(hx); free(hout);
 }
 
 int main() {
     // Warm up: force CUDA driver + runtime initialisation before timing starts.
-    // Without this, the first kernel call pays the JIT/init cost.
     float *d; cudaMalloc(&d, sizeof(float)); cudaFree(d);
 
     // Test across a range of sizes: tiny, near-power-of-2, large.
